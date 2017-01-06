@@ -30,6 +30,7 @@ type IngressNginxConfig struct {
 type Upstream struct {
 	Name            string
 	UpstreamServers []UpstreamServer
+	StickyCookie    string
 }
 
 // UpstreamServer describes a server in an NGINX upstream
@@ -91,9 +92,10 @@ type NginxMainConfig struct {
 // NewUpstreamWithDefaultServer creates an upstream with the default server.
 // proxy_pass to an upstream with the default server returns 502.
 // We use it for services that have no endpoints
-func NewUpstreamWithDefaultServer(name string) Upstream {
+func NewUpstreamWithDefaultServer(name string, stickyCookie string) Upstream {
 	return Upstream{
 		Name:            name,
+		StickyCookie:    stickyCookie,
 		UpstreamServers: []UpstreamServer{UpstreamServer{Address: "127.0.0.1", Port: "8181"}},
 	}
 }

@@ -85,12 +85,13 @@ func (cnf *Configurator) generateNginxCfg(ingEx *IngressEx, pems map[string]stri
 	upstreams := make(map[string]Upstream)
 
 	wsServices := getWebsocketServices(ingEx)
+	spServices := getSessionPersistenceServices(ingEx)
 	rewrites := getRewrites(ingEx)
 	sslServices := getSSLServices(ingEx)
 
 	if ingEx.Ingress.Spec.Backend != nil {
 		name := getNameForUpstream(ingEx.Ingress, emptyHost, ingEx.Ingress.Spec.Backend.ServiceName)
-		upstream := cnf.createUpstream(ingEx, name, ingEx.Ingress.Spec.Backend, ingEx.Ingress.Namespace)
+		upstream := cnf.createUpstream(ingEx, name, ingEx.Ingress.Spec.Backend, ingEx.Ingress.Namespace, spServices[ingEx.Ingress.Spec.Backend.ServiceName])
 		upstreams[name] = upstream
 	}
 
@@ -134,7 +135,7 @@ func (cnf *Configurator) generateNginxCfg(ingEx *IngressEx, pems map[string]stri
 			upsName := getNameForUpstream(ingEx.Ingress, rule.Host, path.Backend.ServiceName)
 
 			if _, exists := upstreams[upsName]; !exists {
-				upstream := cnf.createUpstream(ingEx, upsName, &path.Backend, ingEx.Ingress.Namespace)
+				upstream := cnf.createUpstream(ingEx, upsName, &path.Backend, ingEx.Ingress.Namespace, spServices[path.Backend.ServiceName])
 				upstreams[upsName] = upstream
 			}
 
@@ -334,6 +335,37 @@ func getSSLServices(ingEx *IngressEx) map[string]bool {
 	return sslServices
 }
 
+func getSessionPersistenceServices(ingEx *IngressEx) map[string]string {
+	spServices := make(map[string]string)
+
+	if services, exists := ingEx.Ingress.Annotations["nginx.com/sticky-cookie-services"]; exists {
+		for _, svc := range strings.Split(services, ";") {
+			if serviceName, sticky, err := parseStickyService(svc); err != nil {
+				glog.Errorf("In %v nginx.com/sticky-cookie-services contains invalid declaration: %v, ignoring", ingEx.Ingress.Name, err)
+			} else {
+				spServices[serviceName] = sticky
+			}
+		}
+	}
+
+	return spServices
+}
+
+func parseStickyService(service string) (serviceName string, stickyCookie string, err error) {
+	parts := strings.SplitN(service, " ", 2)
+
+	if len(parts) != 2 {
+		return "", "", fmt.Errorf("Invalid sticky-cookie service format: %s\n", service)
+	}
+
+	svcNameParts := strings.Split(parts[0], "=")
+	if len(svcNameParts) != 2 {
+		return "", "", fmt.Errorf("Invalid sticky-cookie service format: %s\n", svcNameParts)
+	}
+
+	return svcNameParts[1], parts[1], nil
+}
+
 func createLocation(path string, upstream Upstream, cfg *Config, websocket bool, rewrite string, ssl bool) Location {
 	loc := Location{
 		Path:                 path,
@@ -353,8 +385,8 @@ func createLocation(path string, upstream Upstream, cfg *Config, websocket bool,
 	return loc
 }
 
-func (cnf *Configurator) createUpstream(ingEx *IngressEx, name string, backend *extensions.IngressBackend, namespace string) Upstream {
-	ups := NewUpstreamWithDefaultServer(name)
+func (cnf *Configurator) createUpstream(ingEx *IngressEx, name string, backend *extensions.IngressBackend, namespace string, stickyCookie string) Upstream {
+	ups := NewUpstreamWithDefaultServer(name, stickyCookie)
 
 	endps, exists := ingEx.Endpoints[backend.ServiceName+backend.ServicePort.String()]
 	if exists {
